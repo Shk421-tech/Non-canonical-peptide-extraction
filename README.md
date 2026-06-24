@@ -78,11 +78,16 @@ dependencies:
 **Directory Structure**
 
 project/
+
     |── Snakefile
+    
     ├── environment.yml
+    
     ├── reference/
-    │   ├── genome.fa
-    │   └── annotation.gtf
+    
+       ├── genome.fa
+    
+       └── annotation.gtf
 
     ├── data/
 
