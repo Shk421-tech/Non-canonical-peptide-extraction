@@ -37,18 +37,23 @@ Functional annotation*
 
 Installation
 *Clone Repository*
+   
     git clone https://github.com/username/utr-peptide-pipeline.git
 
     cd utr-peptide-pipeline
 *Install Miniconda*
+   
     wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
 
     bash Miniconda3-latest-Linux-x86_64.sh
 *Create Environment*
+   
     conda env create -f environment.yml
 
     conda activate utr_peptide
-Example environment.yml
+    
+**Example environment.yml**
+
 name: utr_peptide
 
 channels:
@@ -71,10 +76,10 @@ dependencies:
   - bioconductor-edger
   - 
 **Directory Structure**
-project/
-    ── Snakefile
-    ├── environment.yml
 
+project/
+    |── Snakefile
+    ├── environment.yml
     ├── reference/
     │   ├── genome.fa
     │   └── annotation.gtf
@@ -99,4 +104,5 @@ project/
     
 **Running the Pipeline**
 Execute
+    
     snakemake --cores 16
