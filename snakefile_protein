@@ -1,0 +1,94 @@
+############################################
+# Snakefile: From abundance table to proteins
+############################################
+
+# Config
+ABUNDANCE_FILE = "results/rsem/abundance_log2fc_table.tsv"
+UTR_FASTA = "results/IRES/ires.fa"
+OUT_DIR = "results"
+SWISSPROT_DB = "swissprot/swissprot"   # <-- path to SwissProt DB basename (without extensions)
+
+rule all:
+    input:
+        f"{OUT_DIR}/blast/expressed_utrs_vs_swissprot.filtered.tsv"
+
+# Step 1: Filter abundance file
+rule filter_abundance:
+    input:
+        ABUNDANCE_FILE
+    output:
+        f"{OUT_DIR}/expressed_ids.txt"
+    shell:
+        """
+        mkdir -p {OUT_DIR}
+        # Assuming tab-separated abundance.tsv, skip header, take first column if $4 != "Not_expressed"
+        awk -F'\\t' 'NR>1 && $4 != "Not_expressed" {{print $1}}' {input} > {output}
+        """
+
+# Step 2: Extract FASTA sequences for expressed IDs
+rule extract_fasta:
+    input:
+        ids=f"{OUT_DIR}/expressed_ids.txt",
+        fasta=UTR_FASTA
+    output:
+        f"{OUT_DIR}/expressed_utrs.fa"
+    run:
+        from Bio import SeqIO
+        ids = set(line.strip() for line in open(input.ids))
+        with open(output[0], "w") as out_f:
+            for record in SeqIO.parse(input.fasta, "fasta"):
+                if record.id in ids:
+                    SeqIO.write(record, out_f, "fasta")
+# Step 3: Run TransDecoder.LongOrfs
+rule transdecoder_longorfs:
+    input:
+        fasta=f"{OUT_DIR}/expressed_utrs.fa"
+    output:
+        f"{OUT_DIR}/transdecoder/longorfs.done"
+    shell:
+        """
+        mkdir -p {OUT_DIR}/transdecoder
+        cp {input.fasta} {OUT_DIR}/transdecoder/
+        TransDecoder.LongOrfs -t {OUT_DIR}/transdecoder/expressed_utrs.fa --output_dir {OUT_DIR}/transdecoder
+        touch {output}
+        """
+
+# Step 4: Run TransDecoder.Predict
+rule transdecoder_predict:
+    input:
+        done=f"{OUT_DIR}/transdecoder/longorfs.done"
+    output:
+        pep=f"{OUT_DIR}/transdecoder/expressed_utrs.fa.transdecoder.pep"
+    shell:
+        """
+        TransDecoder.Predict -t {OUT_DIR}/transdecoder/expressed_utrs.fa --output_dir {OUT_DIR}/transdecoder
+        """
+rule blastp_swissprot:
+    input:
+        pep=f"{OUT_DIR}/transdecoder/expressed_utrs.fa.transdecoder.pep"
+    output:
+        tsv=f"{OUT_DIR}/blast/expressed_utrs_vs_swissprot.tsv"
+    threads: 8
+    shell:
+        """
+        mkdir -p {OUT_DIR}/blast
+        blastp -query {input.pep} -db {SWISSPROT_DB} \
+               -out {output.tsv} \
+               -evalue 1e-5 \
+               -num_threads {threads} \
+               -max_target_seqs 5 \
+               -outfmt "6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore stitle"
+        """
+
+############################################
+# Step 6: Filter BLAST hits
+############################################
+rule filter_blast_hits:
+    input:
+        f"{OUT_DIR}/blast/expressed_utrs_vs_swissprot.tsv"
+    output:
+        f"{OUT_DIR}/blast/expressed_utrs_vs_swissprot.filtered.tsv"
+    shell:
+        """
+        awk -F'\\t' '($3 >= 40 && $4 >= 30 && $11 <= 1e-5)' {input} > {output}
+        """

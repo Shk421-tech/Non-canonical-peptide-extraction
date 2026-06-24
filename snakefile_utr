@@ -1,0 +1,92 @@
+SAMPLES = ["SRR6671825_drought"]
+
+rule all:
+    input:
+        expand("results/{sample}/utr_transcripts/filtered_utrs.fa", sample=SAMPLES)
+
+# Step 1: Extract UTR annotations
+rule extract_utrs_from_annotation:
+    input:
+        ref_gtf="maizeGTF.gtf",
+        ref_genome="maize.fa"
+    output:
+        bed="results/{sample}/utr/utrs.bed",
+        fa="results/{sample}/utr/utrs.fa"
+    shell:
+        """
+        mkdir -p results/{wildcards.sample}/utr
+
+        gffread {input.ref_gtf} -T -o results/{wildcards.sample}/utr/annotation.gtf
+
+        awk '$3 == "CDS"' results/{wildcards.sample}/utr/annotation.gtf | bedtools sort -i - > results/{wildcards.sample}/utr/cds.bed
+        awk '$3 == "exon"' results/{wildcards.sample}/utr/annotation.gtf | bedtools sort -i - > results/{wildcards.sample}/utr/exons.bed
+
+        bedtools subtract -a results/{wildcards.sample}/utr/exons.bed -b results/{wildcards.sample}/utr/cds.bed > {output.bed}
+
+        bedtools getfasta -fi {input.ref_genome} -bed {output.bed} -fo {output.fa}
+        """
+
+# Step 2: Intersect UTRs with transcript models (get only relevant ones)
+rule extract_utr_from_transcripts:
+    input:
+        transcripts_gtf="cufflinks/{sample}/transcripts.gtf",
+        utr_bed="results/{sample}/utr/utrs.bed",
+        ref_genome="maize.fa"
+    output:
+        fa="results/{sample}/utr_transcripts/utr_in_transcripts.fa",
+        intersected_gtf="results/{sample}/utr_transcripts/matching_transcripts.gtf"
+    shell:
+        """
+        mkdir -p results/{wildcards.sample}/utr_transcripts
+
+        # Get only GTF entries overlapping with UTRs (strand-specific, unique)
+        bedtools intersect -a {input.transcripts_gtf} -b {input.utr_bed} -s -u > {output.intersected_gtf}
+
+        # Convert GTF to BED
+        gffread {output.intersected_gtf} -T -o- | awk '$3=="exon"' | bedtools sort -i - > results/{wildcards.sample}/utr_transcripts/utr_hits.bed
+
+        # Extract only the sequences of intersected UTRs
+        bedtools getfasta -fi {input.ref_genome} -bed results/{wildcards.sample}/utr_transcripts/utr_hits.bed -fo {output.fa} -s -name
+        """
+
+#step-3 filter the utrs
+rule filter_utrs:
+    input:
+        fa="results/{sample}/utr_transcripts/utr_in_transcripts.fa"
+    output:
+        filtered="results/{sample}/utr_transcripts/filtered_utrs.fa"
+    run:
+        from Bio import SeqIO
+        import os
+
+        def gc_content(seq):
+            seq = seq.upper()
+            gc = seq.count("G") + seq.count("C")
+            return gc / len(seq) if len(seq) > 0 else 0
+
+        def has_aug(seq):
+            return "AUG" in str(seq).replace("T", "U").upper()
+
+        def has_kozak(seq):
+            return "ACCATG" in str(seq).upper()
+
+        records = SeqIO.parse(input.fa, "fasta")
+        passed = []
+
+        for r in records:
+            seq = str(r.seq).upper()
+
+            if len(seq) <= 60:
+                continue
+            if gc_content(seq) < 0.5:
+                continue
+            if not has_aug(seq):
+                continue
+            if not has_kozak(seq):
+                continue
+
+            passed.append(r)
+
+        os.makedirs(os.path.dirname(output.filtered), exist_ok=True)
+        SeqIO.write(passed, output.filtered, "fasta")
+
